@@ -522,7 +522,45 @@ def parse_args():
                         help="Zapisz log do pliku")
     parser.add_argument("--no-beep", action="store_true",
                         help="Wyłącz powiadomienie dźwiękowe")
+    parser.add_argument("--rescan", action="store_true",
+                        help="Wymuś ponowne skanowanie playlisty (ignoruj cache)")
     return parser.parse_args()
+
+
+# ============ CACHE PLAYLISTY ============
+
+CACHE_FILE = ".playlist_cache.json"
+
+def _get_cache_path(output_dir: str) -> str:
+    return os.path.join(output_dir, CACHE_FILE)
+
+
+def load_cache(output_dir: str) -> list[dict] | None:
+    """Ładuje cache listy filmów (jeśli istnieje)."""
+    cache_path = _get_cache_path(output_dir)
+    if not os.path.exists(cache_path):
+        return None
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        logger.info(f"{color_info('[CACHE]')} Załadowano {len(data)} filmów z cache.")
+        return data
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def save_cache(output_dir: str, entries: list[dict]):
+    """Zapisuje listę filmów do cache."""
+    cache_path = _get_cache_path(output_dir)
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump(entries, f, ensure_ascii=False)
+
+
+def clear_cache(output_dir: str):
+    """Usuwa plik cache."""
+    cache_path = _get_cache_path(output_dir)
+    if os.path.exists(cache_path):
+        os.remove(cache_path)
 
 
 # ============ INTERAKTYWNY SELEKTOR ============
@@ -658,24 +696,33 @@ def main():
         if "/videos" not in url and "@" in url:
             url = url.rstrip("/") + "/videos"
 
-    # Krok 1: Pobierz listę
-    api_key = args.api_key or DEFAULT_API_KEY
-    if args.use_api and api_key:
-        entries = get_playlist_entries_api(url, api_key)
-    else:
-        entries = get_playlist_entries_ytdlp(url, args.cookies, args.cookies_from_browser)
-        if len(entries) <= 100 and api_key:
-            logger.info(f"{color_info('[INFO]')} Próbuję YouTube Data API...")
-            api_entries = get_playlist_entries_api(url, api_key)
-            if len(api_entries) > len(entries):
-                entries = api_entries
+    # Krok 1: Pobierz listę (z cache lub skanowanie)
+    entries = None
 
-    if not entries:
-        logger.error(f"{color_err('[BŁĄD]')} Nie znaleziono filmów.")
-        sys.exit(1)
+    if not args.rescan:
+        entries = load_cache(output_dir)
 
-    # Filtrowanie po długości
-    entries = filter_by_duration(entries, args.min_duration, args.max_duration)
+    if entries is None:
+        api_key = args.api_key or DEFAULT_API_KEY
+        if args.use_api and api_key:
+            entries = get_playlist_entries_api(url, api_key)
+        else:
+            entries = get_playlist_entries_ytdlp(url, args.cookies, args.cookies_from_browser)
+            if len(entries) <= 100 and api_key:
+                logger.info(f"{color_info('[INFO]')} Próbuję YouTube Data API...")
+                api_entries = get_playlist_entries_api(url, api_key)
+                if len(api_entries) > len(entries):
+                    entries = api_entries
+
+        if not entries:
+            logger.error(f"{color_err('[BŁĄD]')} Nie znaleziono filmów.")
+            sys.exit(1)
+
+        # Filtrowanie po długości
+        entries = filter_by_duration(entries, args.min_duration, args.max_duration)
+
+        # Zapisz cache
+        save_cache(output_dir, entries)
 
     # Eksport URL
     if args.export_urls:
@@ -695,6 +742,7 @@ def main():
 
     if not to_download:
         print(f"{color_ok('[INFO]')} Wszystko pobrane!")
+        clear_cache(output_dir)
         return
 
     # Tryb interaktywny — pozwól wybrać

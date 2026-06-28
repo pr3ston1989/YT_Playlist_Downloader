@@ -24,6 +24,9 @@ pobrane.txt
 # Pliki z listą błędów
 failed_downloads.txt
 
+# Cache playlisty
+.playlist_cache.json
+
 # Python
 __pycache__/
 *.pyc
