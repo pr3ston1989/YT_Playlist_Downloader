@@ -56,28 +56,46 @@ DEFAULT_API_KEY = ""  # wpisz swój klucz API jeśli chcesz używać domyślnie
 def get_playlist_entries_ytdlp(playlist_url: str, cookies_file: str = None, cookies_from_browser: str = None) -> list[dict]:
     """
     Pobiera listę filmów z playlisty za pomocą yt-dlp --flat-playlist.
+    Jeśli zwraca dokładnie 100 — próbuje pobrać w partiach (paginacja).
     Zwraca listę słowników z kluczami: id, url, title.
     """
     print(f"[INFO] Pobieranie listy filmów z playlisty (yt-dlp --flat-playlist)...")
     print(f"       URL: {playlist_url}")
 
+    # Najpierw próba pobrania całej listy
+    entries = _fetch_flat_playlist(playlist_url, cookies_file, cookies_from_browser)
+
+    # Jeśli dostaliśmy dokładnie 100 — prawdopodobnie limit.
+    # Próbujemy pobrać w partiach po 50 z --playlist-start/--playlist-end
+    if len(entries) == 100:
+        print("[INFO] Wykryto limit 100 pozycji. Próbuję pobrać w partiach...")
+        entries = _fetch_playlist_in_batches(playlist_url, cookies_file, cookies_from_browser)
+
+    print(f"[INFO] Znaleziono {len(entries)} filmów na playliście.")
+    return entries
+
+
+def _fetch_flat_playlist(playlist_url: str, cookies_file: str = None, cookies_from_browser: str = None,
+                         start: int = None, end: int = None) -> list[dict]:
+    """Pomocnicza: pobiera wpisy z playlisty (opcjonalnie zakres)."""
     cmd = [
         "yt-dlp",
         "--flat-playlist",
         "--dump-json",
         "--no-warnings",
-        playlist_url,
     ]
 
-    # Dodaj cookies jeśli podano
     if cookies_file:
-        cmd.insert(1, "--cookies")
-        cmd.insert(2, cookies_file)
-        print(f"       Cookies: {cookies_file}")
+        cmd.extend(["--cookies", cookies_file])
     elif cookies_from_browser:
-        cmd.insert(1, "--cookies-from-browser")
-        cmd.insert(2, cookies_from_browser)
-        print(f"       Cookies z przeglądarki: {cookies_from_browser}")
+        cmd.extend(["--cookies-from-browser", cookies_from_browser])
+
+    if start is not None:
+        cmd.extend(["--playlist-start", str(start)])
+    if end is not None:
+        cmd.extend(["--playlist-end", str(end)])
+
+    cmd.append(playlist_url)
 
     entries = []
 
@@ -91,8 +109,10 @@ def get_playlist_entries_ytdlp(playlist_url: str, cookies_file: str = None, cook
         )
 
         if result.returncode != 0:
-            print(f"[BŁĄD] yt-dlp --flat-playlist zakończył się kodem {result.returncode}")
-            print(f"       stderr: {result.stderr[:500]}")
+            # Nie loguj błędu jeśli to partia poza zakresem
+            if start and "is not in the playlist" not in result.stderr:
+                print(f"[BŁĄD] yt-dlp --flat-playlist zakończył się kodem {result.returncode}")
+                print(f"       stderr: {result.stderr[:500]}")
             return []
 
         for line in result.stdout.strip().split("\n"):
@@ -104,7 +124,6 @@ def get_playlist_entries_ytdlp(playlist_url: str, cookies_file: str = None, cook
                 title = entry.get("title", "Bez tytułu")
                 url = entry.get("url") or entry.get("webpage_url") or f"https://www.youtube.com/watch?v={video_id}"
 
-                # Upewnij się, że URL jest pełny
                 if not url.startswith("http"):
                     url = f"https://www.youtube.com/watch?v={url}"
 
@@ -123,13 +142,47 @@ def get_playlist_entries_ytdlp(playlist_url: str, cookies_file: str = None, cook
         print("[BŁĄD] yt-dlp nie znaleziony. Upewnij się, że jest w PATH lub aktualnym katalogu.")
         return []
 
-    print(f"[INFO] Znaleziono {len(entries)} filmów na playliście (yt-dlp).")
-
-    if len(entries) == 100:
-        print("[UWAGA] Otrzymano dokładnie 100 pozycji — możliwe, że playlista ma więcej filmów.")
-        print("        Rozważ ustawienie USE_YOUTUBE_API = True i podanie klucza API.")
-
     return entries
+
+
+def _fetch_playlist_in_batches(playlist_url: str, cookies_file: str = None, cookies_from_browser: str = None) -> list[dict]:
+    """
+    Pobiera playlistę w partiach po 50, żeby obejść limit 100.
+    Kontynuuje aż partia zwróci 0 wyników.
+    """
+    all_entries = []
+    seen_ids = set()
+    batch_size = 50
+    start = 1
+
+    while True:
+        end = start + batch_size - 1
+        print(f"       Partia {start}-{end}...", end=" ")
+
+        batch = _fetch_flat_playlist(playlist_url, cookies_file, cookies_from_browser, start=start, end=end)
+
+        # Deduplikacja
+        new_entries = []
+        for entry in batch:
+            if entry["id"] not in seen_ids:
+                seen_ids.add(entry["id"])
+                new_entries.append(entry)
+
+        all_entries.extend(new_entries)
+        print(f"({len(new_entries)} nowych)")
+
+        # Jeśli partia zwróciła mniej niż batch_size — koniec playlisty
+        if len(batch) < batch_size:
+            break
+
+        start += batch_size
+
+        # Bezpieczeństwo — max 2000 filmów
+        if start > 2000:
+            print("[UWAGA] Przekroczono 2000 pozycji, przerywam.")
+            break
+
+    return all_entries
 
 
 def get_playlist_entries_api(playlist_url: str, api_key: str) -> list[dict]:
