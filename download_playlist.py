@@ -7,10 +7,18 @@ Obejście limitu 100 pozycji w yt-dlp:
 2. Pobieramy każdy film osobno z yt-dlp
 
 Użycie:
-    python download_playlist.py
+    python download_playlist.py <URL_PLAYLISTY>
+    python download_playlist.py "https://www.youtube.com/playlist?list=PLxxxxx"
+
+    Opcjonalne argumenty:
+        --output-dir ŚCIEŻKA   Katalog docelowy (domyślnie: aktualny)
+        --archive PLIK         Plik archiwum (domyślnie: pobrane.txt)
+        --delay SEKUNDY        Opóźnienie między pobieraniami (domyślnie: 2)
+        --use-api              Użyj YouTube Data API zamiast flat-playlist
+        --api-key KLUCZ        Klucz YouTube Data API v3
 
 Konfiguracja:
-    Edytuj sekcję KONFIGURACJA poniżej.
+    Można też edytować sekcję DOMYŚLNE USTAWIENIA poniżej.
 """
 
 import subprocess
@@ -18,12 +26,12 @@ import json
 import sys
 import os
 import time
+import argparse
 
-# ============ KONFIGURACJA ============
+# ============ DOMYŚLNE USTAWIENIA ============
 
-PLAYLIST_URL = "https://www.youtube.com/playlist?list=PLPHgm8hN7RH_Wf6vHbr8ZMDO1URp_JlKt"
-OUTPUT_DIR = "."  # katalog docelowy na pliki
-ARCHIVE_FILE = "pobrane.txt"  # plik archiwum (pomijanie już pobranych)
+DEFAULT_OUTPUT_DIR = "."  # katalog docelowy na pliki
+DEFAULT_ARCHIVE_FILE = "pobrane.txt"  # plik archiwum (pomijanie już pobranych)
 FFMPEG_LOCATION = "."  # ścieżka do ffmpeg
 
 # Opcje pobierania
@@ -32,15 +40,14 @@ MERGE_FORMAT = "mkv"
 SUB_LANGS = "pl,en"
 
 # Opóźnienie między pobieraniami (sekundy) — zmniejsza ryzyko throttlingu
-DELAY_BETWEEN_DOWNLOADS = 2
+DEFAULT_DELAY = 2
 
 # YouTube Data API (opcjonalnie, jeśli --flat-playlist zwraca max 100)
 # Wygeneruj klucz: https://console.cloud.google.com/apis/credentials
 # Włącz: YouTube Data API v3
-USE_YOUTUBE_API = False
-YOUTUBE_API_KEY = ""  # wpisz swój klucz API
+DEFAULT_API_KEY = ""  # wpisz swój klucz API jeśli chcesz używać domyślnie
 
-# ============ KONIEC KONFIGURACJI ============
+# ============ KONIEC USTAWIEŃ ============
 
 
 def get_playlist_entries_ytdlp(playlist_url: str) -> list[dict]:
@@ -234,20 +241,62 @@ def download_video(video_url: str, output_dir: str, archive_path: str) -> bool:
         return False
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Pobieranie pełnej playlisty YouTube (obsługa >100 filmów)"
+    )
+    parser.add_argument(
+        "url",
+        help="URL playlisty YouTube"
+    )
+    parser.add_argument(
+        "--output-dir", "-o",
+        default=DEFAULT_OUTPUT_DIR,
+        help=f"Katalog docelowy (domyślnie: {DEFAULT_OUTPUT_DIR})"
+    )
+    parser.add_argument(
+        "--archive", "-a",
+        default=DEFAULT_ARCHIVE_FILE,
+        help=f"Plik archiwum pobranych (domyślnie: {DEFAULT_ARCHIVE_FILE})"
+    )
+    parser.add_argument(
+        "--delay", "-d",
+        type=int,
+        default=DEFAULT_DELAY,
+        help=f"Opóźnienie między pobieraniami w sekundach (domyślnie: {DEFAULT_DELAY})"
+    )
+    parser.add_argument(
+        "--use-api",
+        action="store_true",
+        help="Użyj YouTube Data API v3 (wymaga --api-key)"
+    )
+    parser.add_argument(
+        "--api-key",
+        default=DEFAULT_API_KEY,
+        help="Klucz YouTube Data API v3"
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     print("=" * 60)
     print(" Pobieranie playlisty YouTube (obsługa >100 filmów)")
     print("=" * 60)
     print()
 
-    archive_path = os.path.abspath(ARCHIVE_FILE)
-    output_dir = os.path.abspath(OUTPUT_DIR)
+    archive_path = os.path.abspath(args.archive)
+    output_dir = os.path.abspath(args.output_dir)
+
+    # Utwórz katalog docelowy jeśli nie istnieje
+    os.makedirs(output_dir, exist_ok=True)
 
     # Krok 1: Pobierz listę filmów
-    if USE_YOUTUBE_API and YOUTUBE_API_KEY:
-        entries = get_playlist_entries_api(PLAYLIST_URL, YOUTUBE_API_KEY)
+    if args.use_api and args.api_key:
+        entries = get_playlist_entries_api(args.url, args.api_key)
     else:
-        entries = get_playlist_entries_ytdlp(PLAYLIST_URL)
+        entries = get_playlist_entries_ytdlp(args.url)
 
     if not entries:
         print("[BŁĄD] Nie udało się pobrać listy filmów. Sprawdź URL i połączenie.")
@@ -276,23 +325,30 @@ def main():
     success = 0
     failed = []
 
-    for i, entry in enumerate(to_download, 1):
-        title_short = entry["title"][:60]
-        print(f"[{i}/{len(to_download)}] {title_short}...")
-        print(f"       URL: {entry['url']}")
+    try:
+        for i, entry in enumerate(to_download, 1):
+            title_short = entry["title"][:60]
+            print(f"[{i}/{len(to_download)}] {title_short}...")
+            print(f"       URL: {entry['url']}")
 
-        ok = download_video(entry["url"], output_dir, archive_path)
+            ok = download_video(entry["url"], output_dir, archive_path)
 
-        if ok:
-            success += 1
-            print(f"       OK")
-        else:
-            failed.append(entry)
-            print(f"       BŁĄD")
+            if ok:
+                success += 1
+                print(f"       OK")
+            else:
+                failed.append(entry)
+                print(f"       BŁĄD")
 
-        # Opóźnienie między pobieraniami
-        if i < len(to_download):
-            time.sleep(DELAY_BETWEEN_DOWNLOADS)
+            # Opóźnienie między pobieraniami
+            if i < len(to_download):
+                time.sleep(args.delay)
+
+    except KeyboardInterrupt:
+        print(f"\n\n[INFO] Przerwano przez użytkownika (Ctrl+C).")
+        print(f"       Pobrano w tej sesji: {success}")
+        print(f"       Uruchom ponownie aby kontynuować.")
+        sys.exit(0)
 
     # Podsumowanie
     print()
@@ -304,7 +360,7 @@ def main():
 
     if failed:
         print("\nFilmy z błędami:")
-        failed_file = "failed_downloads.txt"
+        failed_file = os.path.join(output_dir, "failed_downloads.txt")
         with open(failed_file, "w", encoding="utf-8") as f:
             for entry in failed:
                 print(f"  - {entry['title']} ({entry['url']})")

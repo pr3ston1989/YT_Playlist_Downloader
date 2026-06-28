@@ -16,25 +16,32 @@ Skrypt Python do pobierania pełnych playlist YouTube, obchodzący limit 100 poz
 ## Użycie
 
 ```bash
-python download_playlist.py
+python download_playlist.py "https://www.youtube.com/playlist?list=PLxxxxx"
 ```
 
-## Konfiguracja
+Opcjonalne argumenty:
 
-Edytuj sekcję `KONFIGURACJA` w `download_playlist.py`:
+```bash
+python download_playlist.py "URL" --output-dir ./filmy --archive pobrane.txt --delay 3
+python download_playlist.py "URL" --use-api --api-key TWOJ_KLUCZ
+```
 
-| Zmienna | Opis | Domyślnie |
-|---------|------|-----------|
-| `PLAYLIST_URL` | URL playlisty YouTube | — |
-| `OUTPUT_DIR` | Katalog docelowy | `.` |
-| `ARCHIVE_FILE` | Plik z listą pobranych filmów | `pobrane.txt` |
-| `FFMPEG_LOCATION` | Ścieżka do ffmpeg | `.` |
-| `FORMAT` | Format wideo | `bestvideo+bestaudio/best` |
-| `MERGE_FORMAT` | Format kontenera | `mkv` |
-| `SUB_LANGS` | Języki napisów | `pl,en` |
-| `DELAY_BETWEEN_DOWNLOADS` | Opóźnienie między pobieraniami (s) | `2` |
-| `USE_YOUTUBE_API` | Użyj YouTube Data API zamiast flat-playlist | `False` |
-| `YOUTUBE_API_KEY` | Klucz API (jeśli USE_YOUTUBE_API=True) | — |
+| Argument | Opis | Domyślnie |
+|----------|------|-----------|
+| `url` (pozycyjny) | URL playlisty YouTube | wymagany |
+| `--output-dir`, `-o` | Katalog docelowy | `.` |
+| `--archive`, `-a` | Plik archiwum pobranych | `pobrane.txt` |
+| `--delay`, `-d` | Opóźnienie między pobieraniami (s) | `2` |
+| `--use-api` | Użyj YouTube Data API | wyłączony |
+| `--api-key` | Klucz YouTube Data API v3 | — |
+
+## Funkcje
+
+- **Najlepsza jakość** — `bestvideo+bestaudio/best`, mergowane do MKV
+- **Napisy** — pobierane i osadzane w pliku (priorytet: pl, en)
+- **Archiwum** — jeden globalny plik `pobrane.txt` zapobiega ponownemu pobieraniu nawet z innej playlisty
+- **Wznawianie** — Ctrl+C w dowolnym momencie, ponowne uruchomienie kontynuuje od miejsca przerwania
+- **Obsługa >100 filmów** — lista URL wyciągana osobno, pobieranie pojedynczo
 
 ## Jak to działa
 
