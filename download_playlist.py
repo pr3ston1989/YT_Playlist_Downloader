@@ -9,11 +9,14 @@ Obejście limitu 100 pozycji w yt-dlp:
 Użycie:
     python download_playlist.py <URL_PLAYLISTY>
     python download_playlist.py "https://www.youtube.com/playlist?list=PLxxxxx"
+    python download_playlist.py "URL" --cookies cookies.txt
 
     Opcjonalne argumenty:
         --output-dir ŚCIEŻKA   Katalog docelowy (domyślnie: aktualny)
         --archive PLIK         Plik archiwum (domyślnie: pobrane.txt)
         --delay SEKUNDY        Opóźnienie między pobieraniami (domyślnie: 2)
+        --cookies PLIK         Plik cookies (dla niepublicznych playlist)
+        --cookies-from-browser NAZWA  Pobierz cookies z przeglądarki (chrome/firefox/edge)
         --use-api              Użyj YouTube Data API zamiast flat-playlist
         --api-key KLUCZ        Klucz YouTube Data API v3
 
@@ -50,7 +53,7 @@ DEFAULT_API_KEY = ""  # wpisz swój klucz API jeśli chcesz używać domyślnie
 # ============ KONIEC USTAWIEŃ ============
 
 
-def get_playlist_entries_ytdlp(playlist_url: str) -> list[dict]:
+def get_playlist_entries_ytdlp(playlist_url: str, cookies_file: str = None, cookies_from_browser: str = None) -> list[dict]:
     """
     Pobiera listę filmów z playlisty za pomocą yt-dlp --flat-playlist.
     Zwraca listę słowników z kluczami: id, url, title.
@@ -65,6 +68,16 @@ def get_playlist_entries_ytdlp(playlist_url: str) -> list[dict]:
         "--no-warnings",
         playlist_url,
     ]
+
+    # Dodaj cookies jeśli podano
+    if cookies_file:
+        cmd.insert(1, "--cookies")
+        cmd.insert(2, cookies_file)
+        print(f"       Cookies: {cookies_file}")
+    elif cookies_from_browser:
+        cmd.insert(1, "--cookies-from-browser")
+        cmd.insert(2, cookies_from_browser)
+        print(f"       Cookies z przeglądarki: {cookies_from_browser}")
 
     entries = []
 
@@ -197,7 +210,7 @@ def is_already_downloaded(video_id: str, archive_path: str) -> bool:
     return False
 
 
-def download_video(video_url: str, output_dir: str, archive_path: str) -> bool:
+def download_video(video_url: str, output_dir: str, archive_path: str, cookies_file: str = None, cookies_from_browser: str = None) -> bool:
     """
     Pobiera pojedynczy film za pomocą yt-dlp.
     Zwraca True jeśli pobrano / pominięto pomyślnie, False przy błędzie.
@@ -215,6 +228,14 @@ def download_video(video_url: str, output_dir: str, archive_path: str) -> bool:
         "--output", os.path.join(output_dir, "%(title)s [%(id)s].%(ext)s"),
         video_url,
     ]
+
+    # Dodaj cookies jeśli podano
+    if cookies_file:
+        cmd.insert(1, "--cookies")
+        cmd.insert(2, cookies_file)
+    elif cookies_from_browser:
+        cmd.insert(1, "--cookies-from-browser")
+        cmd.insert(2, cookies_from_browser)
 
     try:
         result = subprocess.run(
@@ -266,6 +287,16 @@ def parse_args():
         help=f"Opóźnienie między pobieraniami w sekundach (domyślnie: {DEFAULT_DELAY})"
     )
     parser.add_argument(
+        "--cookies", "-c",
+        default=None,
+        help="Plik cookies (format Netscape, dla niepublicznych playlist)"
+    )
+    parser.add_argument(
+        "--cookies-from-browser",
+        default=None,
+        help="Pobierz cookies z przeglądarki: chrome, firefox, edge, opera, brave"
+    )
+    parser.add_argument(
         "--use-api",
         action="store_true",
         help="Użyj YouTube Data API v3 (wymaga --api-key)"
@@ -296,7 +327,7 @@ def main():
     if args.use_api and args.api_key:
         entries = get_playlist_entries_api(args.url, args.api_key)
     else:
-        entries = get_playlist_entries_ytdlp(args.url)
+        entries = get_playlist_entries_ytdlp(args.url, args.cookies, args.cookies_from_browser)
 
     if not entries:
         print("[BŁĄD] Nie udało się pobrać listy filmów. Sprawdź URL i połączenie.")
@@ -331,7 +362,7 @@ def main():
             print(f"[{i}/{len(to_download)}] {title_short}...")
             print(f"       URL: {entry['url']}")
 
-            ok = download_video(entry["url"], output_dir, archive_path)
+            ok = download_video(entry["url"], output_dir, archive_path, args.cookies, args.cookies_from_browser)
 
             if ok:
                 success += 1

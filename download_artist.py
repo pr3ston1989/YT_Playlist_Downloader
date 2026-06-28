@@ -362,8 +362,15 @@ def parse_args():
 def main():
     args = parse_args()
 
+    # Wykryj czy podano URL zamiast nazwy artysty
+    if args.artist.startswith("http://") or args.artist.startswith("https://"):
+        print("[BŁĄD] Podano URL zamiast nazwy artysty.")
+        print("       Dla playlist użyj: python download_playlist.py \"URL\"")
+        print(f"       Np: python download_playlist.py \"{args.artist}\"")
+        sys.exit(1)
+
     print("=" * 60)
-    print(f" Pobieranie utworów: {args.artist}")
+    print(f" Pobieranie teledysków: {args.artist}")
     print("=" * 60)
     print()
 
