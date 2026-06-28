@@ -624,13 +624,39 @@ def load_urls_from_file(filepath: str) -> list[str]:
 
 # ============ MAIN ============
 
+LAST_URL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_url")
+
+
+def load_last_url() -> str | None:
+    """Ładuje ostatnio użyty URL."""
+    if os.path.exists(LAST_URL_FILE):
+        with open(LAST_URL_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip() or None
+    return None
+
+
+def save_last_url(url: str):
+    """Zapisuje URL do pliku."""
+    with open(LAST_URL_FILE, "w", encoding="utf-8") as f:
+        f.write(url)
+
+
 def main():
     args = parse_args()
 
-    # Walidacja — potrzebujemy URL lub --from-file
+    # Jeśli brak URL — użyj ostatniego
     if not args.url and not args.from_file:
-        print(f"{color_err('[BŁĄD]')} Podaj URL lub --from-file")
-        sys.exit(1)
+        last_url = load_last_url()
+        if last_url:
+            args.url = last_url
+            print(f"{color_info('[INFO]')} Używam ostatniej playlisty: {last_url[:60]}")
+        else:
+            print(f"{color_err('[BŁĄD]')} Podaj URL lub --from-file (brak zapamiętanej playlisty)")
+            sys.exit(1)
+
+    # Zapamiętaj URL
+    if args.url:
+        save_last_url(args.url)
 
     # Logowanie do pliku
     if args.log:

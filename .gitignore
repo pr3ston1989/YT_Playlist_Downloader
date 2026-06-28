@@ -26,6 +26,7 @@ failed_downloads.txt
 
 # Cache playlisty
 .playlist_cache.json
+.last_url
 
 # Python
 __pycache__/
