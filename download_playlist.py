@@ -31,6 +31,19 @@ import os
 import time
 import argparse
 
+# Załaduj zmienne z .env (jeśli istnieje)
+def _load_dotenv():
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, value = line.partition("=")
+                    os.environ.setdefault(key.strip(), value.strip())
+
+_load_dotenv()
+
 # ============ DOMYŚLNE USTAWIENIA ============
 
 DEFAULT_OUTPUT_DIR = "."  # katalog docelowy na pliki
@@ -45,10 +58,8 @@ SUB_LANGS = "pl,en"
 # Opóźnienie między pobieraniami (sekundy) — zmniejsza ryzyko throttlingu
 DEFAULT_DELAY = 2
 
-# YouTube Data API (opcjonalnie, jeśli --flat-playlist zwraca max 100)
-# Wygeneruj klucz: https://console.cloud.google.com/apis/credentials
-# Włącz: YouTube Data API v3
-DEFAULT_API_KEY = ""  # wpisz swój klucz API jeśli chcesz używać domyślnie
+# YouTube Data API — klucz z .env lub wpisany tutaj
+DEFAULT_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
 # ============ KONIEC USTAWIEŃ ============
 
@@ -377,10 +388,17 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     # Krok 1: Pobierz listę filmów
-    if args.use_api and args.api_key:
-        entries = get_playlist_entries_api(args.url, args.api_key)
+    api_key = args.api_key or DEFAULT_API_KEY
+    if args.use_api and api_key:
+        entries = get_playlist_entries_api(args.url, api_key)
     else:
         entries = get_playlist_entries_ytdlp(args.url, args.cookies, args.cookies_from_browser)
+        # Jeśli flat-playlist zwróciło <=100 i mamy klucz API — spróbuj API jako fallback
+        if len(entries) <= 100 and api_key:
+            print("[INFO] Próbuję YouTube Data API jako alternatywę...")
+            api_entries = get_playlist_entries_api(args.url, api_key)
+            if len(api_entries) > len(entries):
+                entries = api_entries
 
     if not entries:
         print("[BŁĄD] Nie udało się pobrać listy filmów. Sprawdź URL i połączenie.")

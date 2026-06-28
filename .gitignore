@@ -3,6 +3,9 @@ yt-dlp.exe
 ffmpeg.exe
 ffprobe.exe
 
+# Zmienne środowiskowe (klucze API)
+.env
+
 # Archiwum pobranych filmów
 pobrane.txt
 
