@@ -313,7 +313,7 @@ def load_archive(archive_path: str) -> set:
 
 def download_video(video_url: str, output_dir: str, archive_path: str,
                    cookies_file=None, cookies_from_browser=None,
-                   audio_only=False, retries=3) -> tuple[bool, str]:
+                   audio_only=False, thumbnail=False, retries=3) -> tuple[bool, str]:
     """
     Pobiera film z retry. Zwraca (sukces, komunikat).
     Wyświetla progress w czasie rzeczywistym.
@@ -331,6 +331,10 @@ def download_video(video_url: str, output_dir: str, archive_path: str,
         cmd.extend(["--merge-output-format", MERGE_FORMAT])
     else:
         cmd.extend(["--extract-audio", "--audio-format", AUDIO_FORMAT])
+
+    # Thumbnail jako okładka
+    if thumbnail:
+        cmd.extend(["--embed-thumbnail", "--write-thumbnail"])
 
     if cookies_file:
         cmd[1:1] = ["--cookies", cookies_file]
@@ -441,7 +445,12 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Pobieranie playlisty YouTube (>100 filmów, z postępem i retry)"
     )
-    parser.add_argument("url", help="URL playlisty YouTube")
+    parser.add_argument("url", nargs="?", default=None,
+                        help="URL playlisty/kanału YouTube (opcjonalny z --from-file)")
+    parser.add_argument("--from-file", default=None,
+                        help="Plik z listą URL (jeden na linię, # = komentarz)")
+    parser.add_argument("--channel", action="store_true",
+                        help="Traktuj URL jako kanał (pobierz wszystkie filmy)")
     parser.add_argument("--output-dir", "-o", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--archive", "-a", default=DEFAULT_ARCHIVE_FILE)
     parser.add_argument("--delay", "-d", type=int, default=DEFAULT_DELAY,
@@ -456,12 +465,16 @@ def parse_args():
     parser.add_argument("--api-key", default=DEFAULT_API_KEY)
     parser.add_argument("--audio-only", action="store_true",
                         help="Pobieraj tylko audio (MP3)")
+    parser.add_argument("--thumbnail", action="store_true",
+                        help="Pobierz miniaturkę i osadź jako okładkę")
     parser.add_argument("--min-duration", type=int, default=None,
                         help="Min. długość filmu w sekundach")
     parser.add_argument("--max-duration", type=int, default=None,
                         help="Max. długość filmu w sekundach")
     parser.add_argument("--export-urls", default=None,
                         help="Eksportuj listę URL do pliku (bez pobierania)")
+    parser.add_argument("--interactive", action="store_true",
+                        help="Tryb interaktywny — wybierz które filmy pobrać")
     parser.add_argument("--log", default=None,
                         help="Zapisz log do pliku")
     parser.add_argument("--no-beep", action="store_true",
@@ -469,10 +482,74 @@ def parse_args():
     return parser.parse_args()
 
 
+# ============ INTERAKTYWNY SELEKTOR ============
+
+def interactive_select(entries: list[dict]) -> list[dict]:
+    """Wyświetla listę filmów i pozwala użytkownikowi wybrać które pobrać."""
+    print(f"\n{color_bold('TRYB INTERAKTYWNY')} — wybierz filmy do pobrania")
+    print(f"Wpisz numery (np: 1,3,5-10) lub 'all' dla wszystkich, 'q' aby wyjść\n")
+
+    for i, entry in enumerate(entries, 1):
+        dur = entry.get("duration")
+        dur_str = f" [{dur // 60}:{dur % 60:02d}]" if dur else ""
+        print(f"  {i:3}. {entry['title'][:60]}{dur_str}")
+
+    print()
+    while True:
+        choice = input(f"Wybór ({len(entries)} dostępnych): ").strip().lower()
+
+        if choice == "q":
+            sys.exit(0)
+        if choice == "all":
+            return entries
+
+        # Parsuj numery: 1,3,5-10
+        selected_indices = set()
+        try:
+            for part in choice.split(","):
+                part = part.strip()
+                if "-" in part:
+                    start, end = part.split("-", 1)
+                    for n in range(int(start), int(end) + 1):
+                        selected_indices.add(n)
+                else:
+                    selected_indices.add(int(part))
+        except ValueError:
+            print("  Nieprawidłowy format. Użyj: 1,3,5-10")
+            continue
+
+        selected = [entries[i - 1] for i in sorted(selected_indices) if 1 <= i <= len(entries)]
+        if selected:
+            print(f"\n  Wybrano {len(selected)} filmów.")
+            return selected
+        print("  Nic nie wybrano, spróbuj ponownie.")
+
+
+# ============ FROM-FILE ============
+
+def load_urls_from_file(filepath: str) -> list[str]:
+    """Ładuje URL-e z pliku (jeden na linię, # = komentarz)."""
+    urls = []
+    with open(filepath, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                # Może być format: URL\tTytuł (z eksportu)
+                url = line.split("\t")[0].strip()
+                if url.startswith("http"):
+                    urls.append(url)
+    return urls
+
+
 # ============ MAIN ============
 
 def main():
     args = parse_args()
+
+    # Walidacja — potrzebujemy URL lub --from-file
+    if not args.url and not args.from_file:
+        print(f"{color_err('[BŁĄD]')} Podaj URL lub --from-file")
+        sys.exit(1)
 
     # Logowanie do pliku
     if args.log:
@@ -482,23 +559,71 @@ def main():
     print(f"{color_bold(' YT Playlist Downloader')}")
     if args.audio_only:
         print(f" Tryb: {color_warn('AUDIO ONLY (MP3)')}")
+    if args.thumbnail:
+        print(f" Thumbnail: {color_info('tak (osadzana okładka)')}")
     if args.parallel > 1:
-        print(f" Równoległe pobieranie: {color_info(str(args.parallel))} wątków")
+        print(f" Równoległe: {color_info(str(args.parallel))} wątków")
+    if args.channel:
+        print(f" Tryb: {color_info('KANAŁ (wszystkie filmy)')}")
+    if args.from_file:
+        print(f" Źródło: {color_info(args.from_file)}")
     print(f"{color_bold('=' * 60)}\n")
 
     archive_path = os.path.abspath(args.archive)
     output_dir = os.path.abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
+    # === TRYB FROM-FILE: pobierz każdy URL osobno ===
+    if args.from_file:
+        urls = load_urls_from_file(args.from_file)
+        if args.url:
+            urls.insert(0, args.url)
+        if not urls:
+            print(f"{color_err('[BŁĄD]')} Plik nie zawiera URL.")
+            sys.exit(1)
+
+        print(f"{color_info('[INFO]')} Załadowano {len(urls)} URL z pliku.\n")
+
+        # Każdy URL traktujemy jako osobny film do pobrania
+        success = 0
+        failed_urls = []
+        for i, url in enumerate(urls, 1):
+            print(f"[{i}/{len(urls)}] {url[:60]}...")
+            ok, msg = download_video(url, output_dir, archive_path,
+                                     args.cookies, args.cookies_from_browser,
+                                     audio_only=args.audio_only,
+                                     thumbnail=args.thumbnail,
+                                     retries=args.retries)
+            if ok:
+                success += 1
+                print(f"       {color_ok('✓ ' + msg)}")
+            else:
+                failed_urls.append(url)
+                print(f"       {color_err('✗ ' + msg[:60])}")
+            if i < len(urls):
+                time.sleep(args.delay)
+
+        print(f"\n{color_bold('PODSUMOWANIE:')} Pobrano {success}/{len(urls)}")
+        if not args.no_beep:
+            beep()
+        return
+
+    # === TRYB KANAŁ: URL kanału ===
+    url = args.url
+    if args.channel:
+        # Upewnij się że URL wskazuje na /videos
+        if "/videos" not in url and "@" in url:
+            url = url.rstrip("/") + "/videos"
+
     # Krok 1: Pobierz listę
     api_key = args.api_key or DEFAULT_API_KEY
     if args.use_api and api_key:
-        entries = get_playlist_entries_api(args.url, api_key)
+        entries = get_playlist_entries_api(url, api_key)
     else:
-        entries = get_playlist_entries_ytdlp(args.url, args.cookies, args.cookies_from_browser)
+        entries = get_playlist_entries_ytdlp(url, args.cookies, args.cookies_from_browser)
         if len(entries) <= 100 and api_key:
             logger.info(f"{color_info('[INFO]')} Próbuję YouTube Data API...")
-            api_entries = get_playlist_entries_api(args.url, api_key)
+            api_entries = get_playlist_entries_api(url, api_key)
             if len(api_entries) > len(entries):
                 entries = api_entries
 
@@ -529,6 +654,12 @@ def main():
         print(f"{color_ok('[INFO]')} Wszystko pobrane!")
         return
 
+    # Tryb interaktywny — pozwól wybrać
+    if args.interactive:
+        to_download = interactive_select(to_download)
+        if not to_download:
+            return
+
     # Krok 3: Pobieraj
     success = 0
     failed = []
@@ -555,7 +686,8 @@ def main():
         ok, msg = download_video(
             entry["url"], output_dir, archive_path,
             args.cookies, args.cookies_from_browser,
-            audio_only=args.audio_only, retries=args.retries
+            audio_only=args.audio_only, thumbnail=args.thumbnail,
+            retries=args.retries
         )
 
         with lock:
