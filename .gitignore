@@ -1,0 +1,33 @@
+# Pliki binarne
+yt-dlp.exe
+ffmpeg.exe
+ffprobe.exe
+
+# Archiwum pobranych filmów
+pobrane.txt
+
+# Pobrane pliki wideo/audio
+*.mkv
+*.mp4
+*.webm
+*.m4a
+*.opus
+
+# Napisy
+*.srt
+*.vtt
+*.ass
+
+# Pliki z listą błędów
+failed_downloads.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/

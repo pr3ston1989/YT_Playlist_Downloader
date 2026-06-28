@@ -1,0 +1,317 @@
+"""
+Skrypt do pobierania pełnej playlisty YouTube (>100 filmów).
+
+Obejście limitu 100 pozycji w yt-dlp:
+1. Pobieramy listę URL-i z playlisty za pomocą --flat-playlist
+   (jeśli to nie zadziała dla >100, przełączamy na YouTube Data API)
+2. Pobieramy każdy film osobno z yt-dlp
+
+Użycie:
+    python download_playlist.py
+
+Konfiguracja:
+    Edytuj sekcję KONFIGURACJA poniżej.
+"""
+
+import subprocess
+import json
+import sys
+import os
+import time
+
+# ============ KONFIGURACJA ============
+
+PLAYLIST_URL = "https://www.youtube.com/playlist?list=PLPHgm8hN7RH_Wf6vHbr8ZMDO1URp_JlKt"
+OUTPUT_DIR = "."  # katalog docelowy na pliki
+ARCHIVE_FILE = "pobrane.txt"  # plik archiwum (pomijanie już pobranych)
+FFMPEG_LOCATION = "."  # ścieżka do ffmpeg
+
+# Opcje pobierania
+FORMAT = "bestvideo+bestaudio/best"
+MERGE_FORMAT = "mkv"
+SUB_LANGS = "pl,en"
+
+# Opóźnienie między pobieraniami (sekundy) — zmniejsza ryzyko throttlingu
+DELAY_BETWEEN_DOWNLOADS = 2
+
+# YouTube Data API (opcjonalnie, jeśli --flat-playlist zwraca max 100)
+# Wygeneruj klucz: https://console.cloud.google.com/apis/credentials
+# Włącz: YouTube Data API v3
+USE_YOUTUBE_API = False
+YOUTUBE_API_KEY = ""  # wpisz swój klucz API
+
+# ============ KONIEC KONFIGURACJI ============
+
+
+def get_playlist_entries_ytdlp(playlist_url: str) -> list[dict]:
+    """
+    Pobiera listę filmów z playlisty za pomocą yt-dlp --flat-playlist.
+    Zwraca listę słowników z kluczami: id, url, title.
+    """
+    print(f"[INFO] Pobieranie listy filmów z playlisty (yt-dlp --flat-playlist)...")
+    print(f"       URL: {playlist_url}")
+
+    cmd = [
+        "yt-dlp",
+        "--flat-playlist",
+        "--dump-json",
+        "--no-warnings",
+        playlist_url,
+    ]
+
+    entries = []
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=300,
+        )
+
+        if result.returncode != 0:
+            print(f"[BŁĄD] yt-dlp --flat-playlist zakończył się kodem {result.returncode}")
+            print(f"       stderr: {result.stderr[:500]}")
+            return []
+
+        for line in result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+                video_id = entry.get("id", "")
+                title = entry.get("title", "Bez tytułu")
+                url = entry.get("url") or entry.get("webpage_url") or f"https://www.youtube.com/watch?v={video_id}"
+
+                # Upewnij się, że URL jest pełny
+                if not url.startswith("http"):
+                    url = f"https://www.youtube.com/watch?v={url}"
+
+                entries.append({
+                    "id": video_id,
+                    "title": title,
+                    "url": url,
+                })
+            except json.JSONDecodeError:
+                continue
+
+    except subprocess.TimeoutExpired:
+        print("[BŁĄD] Timeout przy pobieraniu listy playlisty (300s)")
+        return []
+    except FileNotFoundError:
+        print("[BŁĄD] yt-dlp nie znaleziony. Upewnij się, że jest w PATH lub aktualnym katalogu.")
+        return []
+
+    print(f"[INFO] Znaleziono {len(entries)} filmów na playliście (yt-dlp).")
+
+    if len(entries) == 100:
+        print("[UWAGA] Otrzymano dokładnie 100 pozycji — możliwe, że playlista ma więcej filmów.")
+        print("        Rozważ ustawienie USE_YOUTUBE_API = True i podanie klucza API.")
+
+    return entries
+
+
+def get_playlist_entries_api(playlist_url: str, api_key: str) -> list[dict]:
+    """
+    Pobiera listę filmów przez YouTube Data API v3.
+    Obsługuje paginację (pageToken), więc nie ma limitu 100.
+
+    Wymaga: pip install requests
+    """
+    import requests
+
+    # Wyciągnij ID playlisty z URL
+    from urllib.parse import urlparse, parse_qs
+    parsed = urlparse(playlist_url)
+    params = parse_qs(parsed.query)
+    playlist_id = params.get("list", [None])[0]
+
+    if not playlist_id:
+        print("[BŁĄD] Nie można wyciągnąć ID playlisty z URL.")
+        return []
+
+    print(f"[INFO] Pobieranie listy filmów przez YouTube Data API...")
+    print(f"       Playlist ID: {playlist_id}")
+
+    entries = []
+    base_url = "https://www.googleapis.com/youtube/v3/playlistItems"
+    page_token = None
+
+    while True:
+        req_params = {
+            "part": "snippet",
+            "playlistId": playlist_id,
+            "maxResults": 50,
+            "key": api_key,
+        }
+        if page_token:
+            req_params["pageToken"] = page_token
+
+        resp = requests.get(base_url, params=req_params)
+        if resp.status_code != 200:
+            print(f"[BŁĄD] YouTube API zwróciło status {resp.status_code}: {resp.text[:300]}")
+            break
+
+        data = resp.json()
+        for item in data.get("items", []):
+            snippet = item["snippet"]
+            video_id = snippet["resourceId"]["videoId"]
+            title = snippet.get("title", "Bez tytułu")
+
+            # Pomijaj usunięte/prywatne filmy
+            if title in ("Deleted video", "Private video"):
+                continue
+
+            entries.append({
+                "id": video_id,
+                "title": title,
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+            })
+
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+
+    print(f"[INFO] YouTube API zwróciło {len(entries)} filmów.")
+    return entries
+
+
+def is_already_downloaded(video_id: str, archive_path: str) -> bool:
+    """Sprawdza, czy film jest już w pliku archiwum."""
+    if not os.path.exists(archive_path):
+        return False
+
+    with open(archive_path, "r", encoding="utf-8") as f:
+        for line in f:
+            # Format archiwum yt-dlp: "youtube VIDEO_ID"
+            if video_id in line:
+                return True
+    return False
+
+
+def download_video(video_url: str, output_dir: str, archive_path: str) -> bool:
+    """
+    Pobiera pojedynczy film za pomocą yt-dlp.
+    Zwraca True jeśli pobrano / pominięto pomyślnie, False przy błędzie.
+    """
+    cmd = [
+        "yt-dlp",
+        "-f", FORMAT,
+        "--merge-output-format", MERGE_FORMAT,
+        "--download-archive", archive_path,
+        "--write-subs",
+        "--sub-langs", SUB_LANGS,
+        "--embed-subs",
+        "--ffmpeg-location", FFMPEG_LOCATION,
+        "--no-playlist",  # nie traktuj URL jako playlisty
+        "--output", os.path.join(output_dir, "%(title)s [%(id)s].%(ext)s"),
+        video_url,
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=1800,  # 30 min max na film
+        )
+
+        if result.returncode == 0:
+            return True
+        else:
+            if "has already been recorded in the archive" in result.stdout:
+                return True
+            print(f"       stderr: {result.stderr[:300]}")
+            return False
+
+    except subprocess.TimeoutExpired:
+        print(f"       [TIMEOUT] Przekroczono 30 min na pobieranie.")
+        return False
+    except Exception as e:
+        print(f"       [WYJĄTEK] {e}")
+        return False
+
+
+def main():
+    print("=" * 60)
+    print(" Pobieranie playlisty YouTube (obsługa >100 filmów)")
+    print("=" * 60)
+    print()
+
+    archive_path = os.path.abspath(ARCHIVE_FILE)
+    output_dir = os.path.abspath(OUTPUT_DIR)
+
+    # Krok 1: Pobierz listę filmów
+    if USE_YOUTUBE_API and YOUTUBE_API_KEY:
+        entries = get_playlist_entries_api(PLAYLIST_URL, YOUTUBE_API_KEY)
+    else:
+        entries = get_playlist_entries_ytdlp(PLAYLIST_URL)
+
+    if not entries:
+        print("[BŁĄD] Nie udało się pobrać listy filmów. Sprawdź URL i połączenie.")
+        sys.exit(1)
+
+    # Krok 2: Filtruj już pobrane (szybki pre-check)
+    to_download = []
+    already_done = 0
+    for entry in entries:
+        if is_already_downloaded(entry["id"], archive_path):
+            already_done += 1
+        else:
+            to_download.append(entry)
+
+    print(f"\n[INFO] Status:")
+    print(f"       Wszystkie filmy:   {len(entries)}")
+    print(f"       Już pobrane:       {already_done}")
+    print(f"       Do pobrania:       {len(to_download)}")
+    print()
+
+    if not to_download:
+        print("[INFO] Wszystko pobrane. Nic do zrobienia.")
+        return
+
+    # Krok 3: Pobieraj jeden po drugim
+    success = 0
+    failed = []
+
+    for i, entry in enumerate(to_download, 1):
+        title_short = entry["title"][:60]
+        print(f"[{i}/{len(to_download)}] {title_short}...")
+        print(f"       URL: {entry['url']}")
+
+        ok = download_video(entry["url"], output_dir, archive_path)
+
+        if ok:
+            success += 1
+            print(f"       OK")
+        else:
+            failed.append(entry)
+            print(f"       BŁĄD")
+
+        # Opóźnienie między pobieraniami
+        if i < len(to_download):
+            time.sleep(DELAY_BETWEEN_DOWNLOADS)
+
+    # Podsumowanie
+    print()
+    print("=" * 60)
+    print(f" PODSUMOWANIE")
+    print(f"   Pobrano pomyślnie: {success}")
+    print(f"   Błędy:            {len(failed)}")
+    print("=" * 60)
+
+    if failed:
+        print("\nFilmy z błędami:")
+        failed_file = "failed_downloads.txt"
+        with open(failed_file, "w", encoding="utf-8") as f:
+            for entry in failed:
+                print(f"  - {entry['title']} ({entry['url']})")
+                f.write(f"{entry['url']}\t{entry['title']}\n")
+        print(f"\nZapisano listę niepowodzeń do: {failed_file}")
+        print("Uruchom skrypt ponownie — automatycznie pominie już pobrane filmy.")
+
+
+if __name__ == "__main__":
+    main()
