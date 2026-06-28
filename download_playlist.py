@@ -360,11 +360,13 @@ def download_video(video_url: str, output_dir: str, archive_path: str,
             )
 
             last_progress = ""
+            collected_stdout = []
             while True:
                 line = process.stdout.readline()
                 if not line and process.poll() is not None:
                     break
                 line = line.strip()
+                collected_stdout.append(line)
                 # Parsuj progress z yt-dlp
                 if line.startswith("[download]") and "%" in line:
                     # Wyświetl progress w tej samej linii
@@ -381,26 +383,33 @@ def download_video(video_url: str, output_dir: str, archive_path: str,
                     print(f"\r{last_progress}", end="", flush=True)
 
             process.wait(timeout=1800)
-            stderr_output = process.stderr.read()
+            stderr_output = process.stderr.read() or ""
 
             if last_progress:
                 print()  # nowa linia po progress
 
+            # Połącz oba strumienie do analizy błędów
+            all_output = stderr_output + "\n" + "\n".join(collected_stdout)
+
             if process.returncode == 0:
                 _cleanup_subtitle_files(output_dir)
                 return True, "OK"
-            elif "has already been recorded" in (stderr_output or ""):
+            elif "has already been recorded" in all_output:
                 return True, "już pobrane"
             else:
-                error_msg = stderr_output[:200] if stderr_output else "nieznany błąd"
+                error_msg = all_output[:200] if all_output else "nieznany błąd"
 
                 # Błędy które nie mają sensu retry'ować
-                no_retry_errors = ["Sign in to confirm", "age", "private video",
-                                   "Video unavailable", "copyright"]
-                if any(err in error_msg for err in no_retry_errors):
+                no_retry_keywords = ["Sign in", "age", "confirm your age",
+                                     "private video", "Video unavailable",
+                                     "copyright", "not available"]
+                is_permanent = any(kw.lower() in all_output.lower() for kw in no_retry_keywords)
+
+                if is_permanent:
                     # Przy age-gate: spróbuj raz z cookies z przeglądarki
-                    if "Sign in" in error_msg and not cookies_file and not cookies_from_browser:
-                        print(f"       {color_warn('Age-restricted — próbuję z cookies z przeglądarki...')}")
+                    if ("sign in" in all_output.lower() or "age" in all_output.lower()) \
+                            and not cookies_file and not cookies_from_browser:
+                        print(f"       {color_warn('Age-restricted — próbuję z cookies z Chrome...')}")
                         age_cmd = cmd.copy()
                         age_cmd[1:1] = ["--cookies-from-browser", "chrome"]
                         try:
