@@ -30,6 +30,7 @@ import time
 import argparse
 import threading
 import logging
+import glob
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timedelta
 
@@ -311,6 +312,16 @@ def load_archive(archive_path: str) -> set:
 
 # ============ POBIERANIE FILMÓW ============
 
+def _cleanup_subtitle_files(output_dir: str):
+    """Usuwa pliki .vtt i .srt pozostawione po osadzeniu napisów."""
+    for pattern in ("*.vtt", "*.srt", "*.ass"):
+        for f in glob.glob(os.path.join(output_dir, pattern)):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+
+
 def download_video(video_url: str, output_dir: str, archive_path: str,
                    cookies_file=None, cookies_from_browser=None,
                    audio_only=False, thumbnail=False, retries=3) -> tuple[bool, str]:
@@ -322,9 +333,8 @@ def download_video(video_url: str, output_dir: str, archive_path: str,
 
     cmd = ["yt-dlp", "-f", fmt, "--download-archive", archive_path,
            "--write-subs", "--sub-langs", SUB_LANGS, "--embed-subs",
-           "--compat-options", "no-keep-subs",
            "--ffmpeg-location", FFMPEG_LOCATION, "--no-playlist",
-           "--newline",  # każdy progress w nowej linii — łatwiejsze parsowanie
+           "--newline",
            "--output", os.path.join(output_dir, "%(title)s [%(id)s].%(ext)s"),
            video_url]
 
@@ -377,6 +387,7 @@ def download_video(video_url: str, output_dir: str, archive_path: str,
                 print()  # nowa linia po progress
 
             if process.returncode == 0:
+                _cleanup_subtitle_files(output_dir)
                 return True, "OK"
             elif "has already been recorded" in (stderr_output or ""):
                 return True, "już pobrane"
