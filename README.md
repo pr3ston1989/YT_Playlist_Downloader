@@ -1,6 +1,8 @@
 # YT Playlist Downloader
 
-Skrypt Python do pobierania pełnych playlist YouTube, obchodzący limit 100 pozycji w `yt-dlp`.
+Skrypty Python do pobierania muzyki z YouTube:
+- **Playlisty** (obejście limitu 100 pozycji w yt-dlp)
+- **Wyszukiwanie po artyście** (pobieranie teledysków danego wykonawcy)
 
 ## Problem
 
@@ -11,6 +13,7 @@ Skrypt Python do pobierania pełnych playlist YouTube, obchodzący limit 100 poz
 - Python 3.9+
 - `yt-dlp.exe` w katalogu skryptu (lub w PATH)
 - `ffmpeg.exe` w katalogu skryptu (do mergowania audio+video i osadzania napisów)
+- (opcjonalnie) `pip install ytmusicapi` — dla wyszukiwania po artyście w YouTube Music
 - (opcjonalnie) klucz YouTube Data API v3 — dla playlist >100 pozycji, jeśli `--flat-playlist` nie zwraca pełnej listy
 
 ## Użycie
@@ -50,6 +53,36 @@ python download_playlist.py "URL" --use-api --api-key TWOJ_KLUCZ
 3. Pobiera każdy film osobno z pełnymi opcjami (napisy, mergowanie do MKV)
 4. Zapisuje listę niepowodzeń do `failed_downloads.txt`
 5. Można uruchomić wielokrotnie — automatycznie wznawia od miejsca, w którym skończył
+
+## Pobieranie po artyście
+
+```bash
+# Wyszukaj i pobierz teledyski artysty (domyślnie 30 wyników)
+python download_artist.py "Metallica"
+
+# Więcej wyników
+python download_artist.py "Rammstein" --max-results 50
+
+# Tylko wyświetl co znalazł (bez pobierania)
+python download_artist.py "Daft Punk" --list-only
+
+# Użyj YouTube Music (lepsza dyskografia, wymaga ytmusicapi)
+python download_artist.py "Radiohead" --use-ytmusic
+```
+
+| Argument | Opis | Domyślnie |
+|----------|------|-----------|
+| `artist` (pozycyjny) | Nazwa artysty/zespołu | wymagany |
+| `--max-results`, `-n` | Maks. wyników wyszukiwania | `30` |
+| `--output-dir`, `-o` | Katalog docelowy | `.` |
+| `--archive`, `-a` | Plik archiwum | `pobrane.txt` |
+| `--delay`, `-d` | Opóźnienie (s) | `2` |
+| `--use-ytmusic` | Użyj YouTube Music API | wyłączony |
+| `--list-only` | Tylko wyświetl, nie pobieraj | wyłączony |
+
+**Tryb domyślny** (`ytsearch`) szuka na YouTube "`Artysta official music video`" — dobrze trafia w teledyski.
+
+**Tryb `--use-ytmusic`** przeszukuje YouTube Music i zwraca oficjalne utwory z profilu artysty (lepsza precyzja, wymaga `pip install ytmusicapi`).
 
 ## YouTube Data API (opcjonalnie)
 
