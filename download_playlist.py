@@ -406,21 +406,22 @@ def download_video(video_url: str, output_dir: str, archive_path: str,
                 is_permanent = any(kw.lower() in all_output.lower() for kw in no_retry_keywords)
 
                 if is_permanent:
-                    # Przy age-gate: spróbuj raz z cookies z przeglądarki
+                    # Przy age-gate: spróbuj z cookies z różnych przeglądarek
                     if ("sign in" in all_output.lower() or "age" in all_output.lower()) \
                             and not cookies_file and not cookies_from_browser:
-                        print(f"       {color_warn('Age-restricted — próbuję z cookies z Chrome...')}")
-                        age_cmd = cmd.copy()
-                        age_cmd[1:1] = ["--cookies-from-browser", "chrome"]
-                        try:
-                            age_result = subprocess.run(
-                                age_cmd, capture_output=True, text=True,
-                                encoding="utf-8", errors="replace", timeout=1800)
-                            if age_result.returncode == 0:
-                                _cleanup_subtitle_files(output_dir)
-                                return True, "OK (age-gate bypass)"
-                        except Exception:
-                            pass
+                        for browser in ["chrome", "edge", "firefox", "opera", "brave"]:
+                            print(f"       {color_warn(f'Age-restricted — próbuję cookies z {browser}...')}")
+                            age_cmd = cmd.copy()
+                            age_cmd[1:1] = ["--cookies-from-browser", browser]
+                            try:
+                                age_result = subprocess.run(
+                                    age_cmd, capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", timeout=1800)
+                                if age_result.returncode == 0:
+                                    _cleanup_subtitle_files(output_dir)
+                                    return True, f"OK (age-gate via {browser})"
+                            except Exception:
+                                continue
                     return False, error_msg
 
                 if attempt < retries:
