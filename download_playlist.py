@@ -322,6 +322,7 @@ def download_video(video_url: str, output_dir: str, archive_path: str,
 
     cmd = ["yt-dlp", "-f", fmt, "--download-archive", archive_path,
            "--write-subs", "--sub-langs", SUB_LANGS, "--embed-subs",
+           "--compat-options", "no-keep-subs",
            "--ffmpeg-location", FFMPEG_LOCATION, "--no-playlist",
            "--newline",  # każdy progress w nowej linii — łatwiejsze parsowanie
            "--output", os.path.join(output_dir, "%(title)s [%(id)s].%(ext)s"),
