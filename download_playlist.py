@@ -393,6 +393,27 @@ def download_video(video_url: str, output_dir: str, archive_path: str,
                 return True, "już pobrane"
             else:
                 error_msg = stderr_output[:200] if stderr_output else "nieznany błąd"
+
+                # Błędy które nie mają sensu retry'ować
+                no_retry_errors = ["Sign in to confirm", "age", "private video",
+                                   "Video unavailable", "copyright"]
+                if any(err in error_msg for err in no_retry_errors):
+                    # Przy age-gate: spróbuj raz z cookies z przeglądarki
+                    if "Sign in" in error_msg and not cookies_file and not cookies_from_browser:
+                        print(f"       {color_warn('Age-restricted — próbuję z cookies z przeglądarki...')}")
+                        age_cmd = cmd.copy()
+                        age_cmd[1:1] = ["--cookies-from-browser", "chrome"]
+                        try:
+                            age_result = subprocess.run(
+                                age_cmd, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=1800)
+                            if age_result.returncode == 0:
+                                _cleanup_subtitle_files(output_dir)
+                                return True, "OK (age-gate bypass)"
+                        except Exception:
+                            pass
+                    return False, error_msg
+
                 if attempt < retries:
                     wait = attempt * 5
                     logger.debug(f"Retry {attempt}/{retries}, czekam {wait}s...")
